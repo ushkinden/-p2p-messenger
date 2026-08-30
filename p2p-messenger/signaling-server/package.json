@@ -1,0 +1,17 @@
+{
+  "name": "p2p-signaling-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Лёгкий сигнальный сервер для peer-to-peer мессенджера (WebRTC). Сообщения через него не проходят и не хранятся — только помогает устройствам найти друг друга и договориться о прямом соединении.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "ws": "^8.18.0"
+  }
+}

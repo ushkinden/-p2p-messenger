@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Прямая связь — P2P-мессенджер без сервера сообщений</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+<!-- Экран первого запуска: генерация ID и настройка сигнального сервера -->
+<div id="setup-screen" class="setup-screen">
+  <div class="setup-card">
+    <div class="setup-brand">
+      <span class="setup-mark">◈</span>
+      <h1>Прямая связь</h1>
+      <p class="setup-tagline">Сообщения идут напрямую между устройствами. Ничего не хранится на сервере — только у вас на устройстве.</p>
+    </div>
+
+    <label class="setup-label">Ваше имя (видно только вам, для удобства)
+      <input type="text" id="setup-name" placeholder="Например, Денис" maxlength="40" />
+    </label>
+
+    <label class="setup-label">Адрес сигнального сервера
+      <input type="text" id="setup-signaling" placeholder="wss://ваш-сервер.example.com" />
+    </label>
+    <p class="setup-hint">Это адрес лёгкого сервера, который просто помогает устройствам найти друг друга. Сам он переписку не хранит и не читает. Инструкция по запуску — в README проекта.</p>
+
+    <button id="setup-continue" class="btn-primary">Продолжить</button>
+    <p id="setup-error" class="setup-error hidden"></p>
+  </div>
+</div>
+
+<!-- Основной экран -->
+<div id="app-screen" class="app-screen hidden">
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <span class="brand-mark">◈</span>
+      <span class="brand-name">Прямая связь</span>
+      <button id="settings-btn" class="icon-btn-ghost" title="Настройки">⚙</button>
+    </div>
+
+    <div class="my-id-card">
+      <div class="my-id-label">Ваш номер</div>
+      <div class="my-id-value" id="my-id-value">—</div>
+      <button id="copy-id-btn" class="link-btn">Скопировать</button>
+      <div class="signaling-status">
+        <span class="status-dot" id="signaling-dot"></span>
+        <span id="signaling-status-text">подключение…</span>
+      </div>
+    </div>
+
+    <div class="contacts-header">
+      <span class="contacts-label">Контакты</span>
+      <button id="add-contact-btn" class="link-btn">+ Добавить</button>
+    </div>
+    <ul id="contacts-list" class="contacts-list"></ul>
+  </aside>
+
+  <main class="chat-main">
+    <div id="chat-empty" class="chat-empty">
+      <p>Добавьте контакт по его номеру, чтобы начать переписку.</p>
+    </div>
+
+    <div id="chat-active" class="chat-active hidden">
+      <header class="chat-header">
+        <button type="button" id="back-btn" class="icon-btn back-btn hidden" title="К списку контактов">←</button>
+        <span class="avatar" id="peer-avatar"></span>
+        <div>
+          <div id="peer-name" class="peer-name"></div>
+          <div id="peer-status" class="peer-status">
+            <span class="status-dot" id="peer-status-dot"></span>
+            <span id="peer-status-text">офлайн</span>
+          </div>
+        </div>
+      </header>
+
+      <div id="messages" class="messages"></div>
+
+      <form id="message-form" class="message-form">
+        <button type="button" id="attach-btn" class="icon-btn" title="Прикрепить файл, фото или видео">📎</button>
+        <input type="file" id="file-input" hidden />
+        <input type="text" id="text-input" placeholder="Написать сообщение…" autocomplete="off" />
+        <button type="submit" class="btn-primary btn-send">Отправить</button>
+      </form>
+    </div>
+  </main>
+</div>
+
+<!-- Модалка добавления контакта -->
+<div id="add-contact-modal" class="modal hidden">
+  <div class="modal-card">
+    <h2>Новый контакт</h2>
+    <label>Номер собеседника
+      <input type="text" id="contact-id-input" inputmode="numeric" maxlength="9" placeholder="9 цифр" />
+    </label>
+    <label>Имя (как показывать у вас)
+      <input type="text" id="contact-name-input" maxlength="40" placeholder="Например, Юлия" />
+    </label>
+    <p id="add-contact-error" class="setup-error hidden"></p>
+    <div class="modal-actions">
+      <button type="button" id="add-contact-cancel" class="btn-secondary">Отмена</button>
+      <button type="button" id="add-contact-confirm" class="btn-primary">Добавить</button>
+    </div>
+  </div>
+</div>
+
+<!-- Модалка настроек -->
+<div id="settings-modal" class="modal hidden">
+  <div class="modal-card">
+    <h2>Настройки</h2>
+    <label>Ваше имя
+      <input type="text" id="settings-name" maxlength="40" />
+    </label>
+    <label>Адрес сигнального сервера
+      <input type="text" id="settings-signaling" />
+    </label>
+    <label>TURN-сервер (необязательно, для надёжности соединения)
+      <input type="text" id="settings-turn-url" placeholder="turn:example.com:3478" />
+    </label>
+    <label>TURN — логин
+      <input type="text" id="settings-turn-user" />
+    </label>
+    <label>TURN — пароль
+      <input type="password" id="settings-turn-pass" />
+    </label>
+    <p class="setup-hint">TURN нужен не всегда — только если у вас или собеседника не получается установить прямое соединение напрямую (строгий NAT/файрвол). Бесплатные варианты описаны в README.</p>
+    <div class="modal-actions">
+      <button type="button" id="settings-cancel" class="btn-secondary">Отмена</button>
+      <button type="button" id="settings-save" class="btn-primary">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
