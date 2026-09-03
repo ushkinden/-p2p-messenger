@@ -91,6 +91,16 @@
     });
   }
 
+  async function idbDelete(storeName, key) {
+    const db = await dbPromise;
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(storeName, 'readwrite');
+      tx.objectStore(storeName).delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
   // ============================================================
   // Состояние приложения
   // ============================================================
@@ -291,7 +301,7 @@
     if (state.contacts.length === 0) {
       const li = document.createElement('li');
       li.className = 'contacts-empty';
-      li.textContent = 'Контактов пока нет. Обменяйтесь номерами с собеседником и добавьте его.';
+      li.textContent = 'Контактов пока нет. Обменяйтесь номерами с собеседником и добавление его.";
       contactsList.appendChild(li);
       return;
     }
@@ -306,8 +316,13 @@
           <div class="contact-id mono">${formatId(c.id)}</div>
         </span>
         <span class="status-dot ${isOnline ? 'online' : ''}"></span>
+        <button type="button" class="contact-delete-btn" title="Удалить контакт">✕</button>
       `;
       li.addEventListener('click', () => openChat(c.id));
+      li.querySelector('.contact-delete-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteContact(c.id, c.name);
+      });
       contactsList.appendChild(li);
     });
   }
@@ -347,6 +362,32 @@
     el('add-contact-modal').classList.add('hidden');
   });
 
+  async function deleteContact(peerId, name) {
+    const ok = confirm(`Удалить контакт «${name || formatId(peerId)}«? Переписка с ним тоже будет удалена с этого устройства.`);
+    if (!ok) return;
+
+    cleanupPeerConnection(peerId);
+
+    await idbDelete('contacts', peerId);
+    const msgs = await idbGetByIndex('messages', 'peerId', peerId);
+    for (const m of msgs) {
+      await idbDelete('messages', m.msgId);
+    }
+
+    state.contacts = state.contacts.filter((c) => c.id !== peerId);
+    state.online.delete(peerId);
+    state.peers.delete(peerId);
+
+    if (state.activePeerId === peerId) {
+      state.activePeerId = null;
+      chatActive.classList.add('hidden');
+      chatEmpty.classList.remove('hidden');
+      backBtn.classList.add('hidden');
+    }
+
+    renderContacts();
+  }
+
   // ============================================================
   // Настройки
   // ============================================================
@@ -357,8 +398,50 @@
     el('settings-turn-url').value = localStorage.getItem(LS.turnUrl) || '';
     el('settings-turn-user').value = localStorage.getItem(LS.turnUser) || '';
     el('settings-turn-pass').value = localStorage.getItem(LS.turnPass) || '';
+    updateNotificationsUI();
     el('settings-modal').classList.remove('hidden');
   });
+
+  function updateNotificationsUI() {
+    const statusEl = el('notifications-status');
+    const btn = el('notifications-enable-btn');
+    if (!('Notification' in window)) {
+      statusEl.textContent = 'браузер не поддерживает уведомления';
+      btn.classList.add('hidden');
+      return;
+    }
+    if (Notification.permission === 'granted') {
+      statusEl.textContent = 'включены - придёт уведомление о новом сообщении';
+      btn.classList.add('hidden');
+    } else if (Notification.permission === 'denied') {
+      statusEl.textContent = 'запрещены в браузере — включите вручную в настройках сайта браузера';
+      btn.classList.add('hidden');
+    } else {
+      statusEl.textContent = 'пока не разрешены';
+      btn.classList.remove('hidden');
+    }
+  }
+
+  el('notifications-enable-btn').addEventListener('click', async () => {
+    if (!('Notification' in window)) return;
+    await Notification.requestPermission();
+    updateNotificationsUI();
+  });
+
+  function notifyNewMessage(peerId, text) {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    // Не отпугиваем уведомлением, если вкладка открыта и переписка с этим
+    // собеседником уже на экране — тогда сообщение и так видно.
+    if (!document.hidden && state.activePeerId === peerId) return;
+    const contact = state.contacts.find((c) => c.id === peerId);
+    const title = contact ? contact.name : 'Новое сообщение';
+    const notification = new Notification(title, { body: text, tag: 'p2p-msg-' + peerId });
+    notification.onclick = () => {
+      window.focus();
+      openChat(peerId);
+      notification.close();
+    };
+  }
   el('settings-cancel').addEventListener('click', () => el('settings-modal').classList.add('hidden'));
 
   el('settings-save').addEventListener('click', () => {
@@ -378,7 +461,7 @@
   });
 
   // ============================================================
-  // Открытие чата
+  // Отрисовка чата
   // ============================================================
 
   async function openChat(peerId) {
@@ -420,7 +503,7 @@
       peerStatusText.textContent = 'соединение установлено';
     } else if (online) {
       peerStatusDot.className = 'status-dot connecting';
-      peerStatusText.textContent = 'в сети — соединяемся…';
+      peerStatusText.textContent = 'в сети — соединяемс…';
     } else {
       peerStatusDot.className = 'status-dot';
       peerStatusText.textContent = 'офлайн — сообщения будут отправлены, когда появится';
@@ -432,328 +515,7 @@
   }
 
   // ============================================================
-  // Отрисовка сообщений
-  // ============================================================
-
-  function renderMessage(m) {
-    const row = document.createElement('div');
-    row.className = 'msg-row' + (m.direction === 'out' ? ' mine' : '');
-    row.dataset.msgId = m.msgId;
-
-    const bubble = document.createElement('div');
-    bubble.className = 'bubble';
-
-    if (m.kind === 'text') {
-      const p = document.createElement('div');
-      p.textContent = m.text;
-      bubble.appendChild(p);
-    } else if (m.kind === 'image' && m.blob) {
-      const img = document.createElement('img');
-      img.src = trackedUrl(m.blob);
-      bubble.appendChild(img);
-    } else if (m.kind === 'video' && m.blob) {
-      const vid = document.createElement('video');
-      vid.src = trackedUrl(m.blob);
-      vid.controls = true;
-      bubble.appendChild(vid);
-    } else if (m.blob) {
-      const a = document.createElement('a');
-      a.className = 'file-chip';
-      a.href = trackedUrl(m.blob);
-      a.download = m.fileName || 'файл';
-      a.innerHTML = `📄 <span>${escapeHtml(m.fileName || 'файл')}${m.fileSize ? ` · ${fmtSize(m.fileSize)}` : ''}</span>`;
-      bubble.appendChild(a);
-    } else {
-      // файл ещё передаётся
-      const label = document.createElement('div');
-      label.textContent = `📎 ${m.fileName || 'файл'}${m.fileSize ? ` · ${fmtSize(m.fileSize)}` : ''}`;
-      bubble.appendChild(label);
-      const bar = document.createElement('div');
-      bar.className = 'transfer-progress';
-      bar.innerHTML = '<div class="transfer-progress-bar"></div>';
-      bubble.appendChild(bar);
-    }
-
-    const meta = document.createElement('div');
-    meta.className = 'bubble-meta';
-    const time = document.createElement('span');
-    time.textContent = fmtTime(m.createdAt);
-    meta.appendChild(time);
-    if (m.direction === 'out') {
-      const status = document.createElement('span');
-      status.textContent = m.status === 'pending' ? '· ожидает' : m.status === 'sent' ? '· отправлено' : '';
-      meta.appendChild(status);
-    }
-    bubble.appendChild(meta);
-
-    row.appendChild(bubble);
-    messagesEl.appendChild(row);
-    return row;
-  }
-
-  function updateMessageProgress(msgId, fraction) {
-    const row = messagesEl.querySelector(`[data-msg-id="${msgId}"]`);
-    if (!row) return;
-    const bar = row.querySelector('.transfer-progress-bar');
-    if (bar) bar.style.width = `${Math.round(fraction * 100)}%`;
-  }
-
-  function replaceMessageRow(m) {
-    const old = messagesEl.querySelector(`[data-msg-id="${m.msgId}"]`);
-    const row = renderMessage(m);
-    if (old) {
-      old.replaceWith(row);
-    }
-  }
-
-  // ============================================================
-  // Отправка: текст и файлы
-  // ============================================================
-
-  messageForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const text = textInput.value.trim();
-    if (!text || !state.activePeerId) return;
-    textInput.value = '';
-    const msg = {
-      msgId: crypto.randomUUID(),
-      peerId: state.activePeerId,
-      direction: 'out',
-      kind: 'text',
-      text,
-      createdAt: Date.now(),
-      status: 'pending',
-    };
-    await idbPut('messages', msg);
-    if (state.activePeerId) { renderMessage(msg); scrollToBottom(); }
-    attemptDeliver(state.activePeerId);
-  });
-
-  attachBtn.addEventListener('click', () => fileInput.click());
-
-  fileInput.addEventListener('change', async () => {
-    if (!fileInput.files.length || !state.activePeerId) return;
-    const file = fileInput.files[0];
-    const kind = file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : 'file';
-    const msg = {
-      msgId: crypto.randomUUID(),
-      peerId: state.activePeerId,
-      direction: 'out',
-      kind,
-      blob: file,
-      fileName: file.name,
-      mimeType: file.type || 'application/octet-stream',
-      fileSize: file.size,
-      createdAt: Date.now(),
-      status: 'pending',
-    };
-    await idbPut('messages', msg);
-    if (state.activePeerId) { renderMessage(msg); scrollToBottom(); }
-    fileInput.value = '';
-    attemptDeliver(state.activePeerId);
-  });
-
-  // Очередь на отправку для каждого собеседника обрабатывается по одному
-  // сообщению за раз (чтобы не мешать несколько файлов в одном канале).
-  async function attemptDeliver(peerId) {
-    const peerConn = getOrCreatePeerConn(peerId);
-    if (peerConn.sending) return;
-    if (!peerConn.dc || peerConn.dc.readyState !== 'open') {
-      if (state.online.get(peerId)) connectToPeer(peerId);
-      return;
-    }
-    const pending = (await idbGetByIndex('messages', 'peerId', peerId))
-      .filter((m) => m.direction === 'out' && m.status === 'pending')
-      .sort((a, b) => a.createdAt - b.createdAt);
-    if (!pending.length) return;
-
-    peerConn.sending = true;
-    for (const m of pending) {
-      if (!peerConn.dc || peerConn.dc.readyState !== 'open') break;
-      try {
-        if (m.kind === 'text') {
-          peerConn.dc.send(JSON.stringify({ kind: 'text', msgId: m.msgId, text: m.text, ts: m.createdAt }));
-        } else {
-          await sendFileOverChannel(peerConn.dc, m);
-        }
-        m.status = 'sent';
-        await idbPut('messages', m);
-        if (state.activePeerId === peerId) updateBubbleStatus(m);
-      } catch (err) {
-        console.error('Не удалось отправить сообщение, останется в очереди:', err);
-        break;
-      }
-    }
-    peerConn.sending = false;
-  }
-
-  function updateBubbleStatus(m) {
-    const row = messagesEl.querySelector(`[data-msg-id="${m.msgId}"]`);
-    if (!row) return;
-    const statusEl = row.querySelector('.bubble-meta span:last-child');
-    if (statusEl) statusEl.textContent = '· отправлено';
-  }
-
-  const CHUNK_SIZE = 16 * 1024;
-  const BUFFERED_AMOUNT_LOW_THRESHOLD = 256 * 1024;
-
-  async function sendFileOverChannel(dc, m) {
-    dc.send(JSON.stringify({
-      kind: 'file-meta', msgId: m.msgId, name: m.fileName, mime: m.mimeType, size: m.fileSize, ts: m.createdAt,
-    }));
-    const buf = await m.blob.arrayBuffer();
-    let offset = 0;
-    dc.bufferedAmountLowThreshold = BUFFERED_AMOUNT_LOW_THRESHOLD;
-    while (offset < buf.byteLength) {
-      if (dc.readyState !== 'open') throw new Error('канал закрылся во время передачи');
-      if (dc.bufferedAmount > BUFFERED_AMOUNT_LOW_THRESHOLD) {
-        await new Promise((resolve) => {
-          dc.addEventListener('bufferedamountlow', resolve, { once: true });
-        });
-      }
-      const chunk = buf.slice(offset, offset + CHUNK_SIZE);
-      dc.send(chunk);
-      offset += CHUNK_SIZE;
-      if (state.activePeerId === m.peerId) updateMessageProgress(m.msgId, offset / buf.byteLength);
-    }
-    dc.send(JSON.stringify({ kind: 'file-end', msgId: m.msgId }));
-  }
-
-  // ============================================================
-  // WebRTC: установление соединения
-  // ============================================================
-
-  function getOrCreatePeerConn(peerId) {
-    if (!state.peers.has(peerId)) {
-      state.peers.set(peerId, { pc: null, dc: null, incomingFile: null, sending: false, makingOffer: false, pendingCandidates: [] });
-    }
-    return state.peers.get(peerId);
-  }
-
-  function createPeerConnection(peerId) {
-    const pc = new RTCPeerConnection({ iceServers: iceServers() });
-    const peerConn = getOrCreatePeerConn(peerId);
-    peerConn.pc = pc;
-
-    pc.onicecandidate = (e) => {
-      if (e.candidate) {
-        send({ type: 'signal', to: peerId, data: { type: 'candidate', candidate: e.candidate } });
-      }
-    };
-
-    pc.onconnectionstatechange = () => {
-      if (state.activePeerId === peerId) updatePeerStatusUI();
-      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
-        cleanupPeerConnection(peerId);
-      }
-    };
-
-    pc.ondatachannel = (e) => {
-      setupDataChannel(peerId, e.channel);
-    };
-
-    return pc;
-  }
-
-  function connectToPeer(peerId) {
-    const peerConn = getOrCreatePeerConn(peerId);
-    if (peerConn.pc) return; // уже соединяемся или соединены
-    const pc = createPeerConnection(peerId);
-    const dc = pc.createDataChannel('chat', { ordered: true });
-    setupDataChannel(peerId, dc);
-
-    peerConn.makingOffer = true;
-    pc.createOffer()
-      .then((offer) => pc.setLocalDescription(offer))
-      .then(() => {
-        send({ type: 'signal', to: peerId, data: { type: 'offer', sdp: pc.localDescription } });
-      })
-      .catch((err) => console.error('Ошибка создания offer:', err))
-      .finally(() => { peerConn.makingOffer = false; });
-  }
-
-  function setupDataChannel(peerId, dc) {
-    const peerConn = getOrCreatePeerConn(peerId);
-    peerConn.dc = dc;
-    dc.binaryType = 'arraybuffer';
-
-    dc.onopen = () => {
-      if (state.activePeerId === peerId) updatePeerStatusUI();
-      attemptDeliver(peerId);
-    };
-    dc.onclose = () => {
-      if (state.activePeerId === peerId) updatePeerStatusUI();
-    };
-    dc.onmessage = (e) => handleChannelMessage(peerId, e.data);
-  }
-
-  function handleChannelMessage(peerId, data) {
-    const peerConn = getOrCreatePeerConn(peerId);
-
-    if (typeof data === 'string') {
-      let ctrl;
-      try { ctrl = JSON.parse(data); } catch { return; }
-
-      if (ctrl.kind === 'text') {
-        const m = {
-          msgId: ctrl.msgId || crypto.randomUUID(),
-          peerId,
-          direction: 'in',
-          kind: 'text',
-          text: ctrl.text,
-          createdAt: ctrl.ts || Date.now(),
-          status: 'received',
-        };
-        idbPut('messages', m);
-        if (state.activePeerId === peerId) { renderMessage(m); scrollToBottom(); }
-
-      } else if (ctrl.kind === 'file-meta') {
-        peerConn.incomingFile = {
-          msgId: ctrl.msgId, name: ctrl.name, mime: ctrl.mime, size: ctrl.size,
-          chunks: [], received: 0,
-        };
-        const placeholder = {
-          msgId: ctrl.msgId, peerId, direction: 'in',
-          kind: (ctrl.mime || '').startsWith('image/') ? 'image' : (ctrl.mime || '').startsWith('video/') ? 'video' : 'file',
-          fileName: ctrl.name, fileSize: ctrl.size, mimeType: ctrl.mime,
-          createdAt: ctrl.ts || Date.now(), status: 'receiving',
-        };
-        if (state.activePeerId === peerId) { renderMessage(placeholder); scrollToBottom(); }
-
-      } else if (ctrl.kind === 'file-end') {
-        const incoming = peerConn.incomingFile;
-        if (!incoming || incoming.msgId !== ctrl.msgId) return;
-        const blob = new Blob(incoming.chunks, { type: incoming.mime || 'application/octet-stream' });
-        const m = {
-          msgId: incoming.msgId, peerId, direction: 'in',
-          kind: (incoming.mime || '').startsWith('image/') ? 'image' : (incoming.mime || '').startsWith('video/') ? 'video' : 'file',
-          blob, fileName: incoming.name, fileSize: incoming.size, mimeType: incoming.mime,
-          createdAt: Date.now(), status: 'received',
-        };
-        idbPut('messages', m);
-        peerConn.incomingFile = null;
-        if (state.activePeerId === peerId) replaceMessageRow(m);
-      }
-    } else {
-      // бинарный чанк файла
-      const incoming = peerConn.incomingFile;
-      if (!incoming) return;
-      incoming.chunks.push(data);
-      incoming.received += data.byteLength;
-      if (state.activePeerId === peerId) updateMessageProgress(incoming.msgId, incoming.received / incoming.size);
-    }
-  }
-
-  function cleanupPeerConnection(peerId) {
-    const peerConn = state.peers.get(peerId);
-    if (!peerConn) return;
-    if (peerConn.pc) { try { peerConn.pc.close(); } catch {} }
-    state.peers.delete(peerId);
-    if (state.activePeerId === peerId) updatePeerStatusUI();
-  }
-
-  // ============================================================
-  // Обработка входящих сигналов (offer/answer/candidate)
+  // Отрисовка сообщений ходтнойцепаки (offer/answer/candidate)
   // ============================================================
 
   async function handleSignal(from, data) {
