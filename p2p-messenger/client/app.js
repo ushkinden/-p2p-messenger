@@ -2,12 +2,16 @@
   'use strict';
 
   function setVhVar() {
-    document.documentElement.style.setProperty('--vh', (window.innerHeight * 0.01) + 'px');
+        const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+        document.documentElement.style.setProperty('--vh', (h * 0.01) + 'px');
   }
   setVhVar();
   window.addEventListener('resize', setVhVar);
   window.addEventListener('orientationchange', setVhVar);
-  if (window.visualViewport) window.visualViewport.addEventListener('resize', setVhVar);
+    if (window.visualViewport) {
+          window.visualViewport.addEventListener('resize', setVhVar);
+          window.visualViewport.addEventListener('scroll', setVhVar);
+    }
 
   // ============================================================
   // Настройки / локальное хранилище
