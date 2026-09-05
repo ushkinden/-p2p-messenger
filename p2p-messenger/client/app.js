@@ -301,7 +301,7 @@
     if (state.contacts.length === 0) {
       const li = document.createElement('li');
       li.className = 'contacts-empty';
-      li.textContent = 'Контактов пока нет. Обменяйтесь номерами с собеседником и добавление его.";
+            li.textContent = 'Контактов пока нет. Обменяйтесь номерами с собеседником и добавьте его.';
       contactsList.appendChild(li);
       return;
     }
@@ -363,7 +363,7 @@
   });
 
   async function deleteContact(peerId, name) {
-    const ok = confirm(`Удалить контакт «${name || formatId(peerId)}«? Переписка с ним тоже будет удалена с этого устройства.`);
+        const ok = confirm(`Удалить контакт «${name || formatId(peerId)}»? Переписка с ним тоже будет удалена с этого устройства.`);
     if (!ok) return;
 
     cleanupPeerConnection(peerId);
@@ -411,7 +411,7 @@
       return;
     }
     if (Notification.permission === 'granted') {
-      statusEl.textContent = 'включены - придёт уведомление о новом сообщении';
+            statusEl.textContent = 'включены — придёт уведомление о новом сообщении';
       btn.classList.add('hidden');
     } else if (Notification.permission === 'denied') {
       statusEl.textContent = 'запрещены в браузере — включите вручную в настройках сайта браузера';
@@ -461,7 +461,7 @@
   });
 
   // ============================================================
-  // Отрисовка чата
+    // Открытие чата
   // ============================================================
 
   async function openChat(peerId) {
@@ -503,7 +503,7 @@
       peerStatusText.textContent = 'соединение установлено';
     } else if (online) {
       peerStatusDot.className = 'status-dot connecting';
-      peerStatusText.textContent = 'в сети — соединяемс…';
+            peerStatusText.textContent = 'в сети — соединяемся…';
     } else {
       peerStatusDot.className = 'status-dot';
       peerStatusText.textContent = 'офлайн — сообщения будут отправлены, когда появится';
@@ -609,7 +609,7 @@
     };
     await idbPut('messages', msg);
     if (state.activePeerId) { renderMessage(msg); scrollToBottom(); }
-    attempTDeliver(state.activePeerId);
+        attemptDeliver(state.activePeerId);
   });
 
   attachBtn.addEventListener('click', () => fileInput.click());
@@ -636,8 +636,7 @@
     attemptDeliver(state.activePeerId);
   });
 
-  // Очередь �
- отправку для каждого собеседника обрабатывается по одному
+    // Очередь на отправку для каждого собеседника обрабатывается по одному
   // сообщению за раз (чтобы не мешать несколько файлов в одном канале).
   async function attemptDeliver(peerId) {
     const peerConn = getOrCreatePeerConn(peerId);
