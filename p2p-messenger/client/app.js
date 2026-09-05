@@ -1,16 +1,20 @@
 (() => {
   'use strict';
 
-  function setVhVar() {
-        const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-        document.documentElement.style.setProperty('--vh', (h * 0.01) + 'px');
-  }
-  setVhVar();
-  window.addEventListener('resize', setVhVar);
-  window.addEventListener('orientationchange', setVhVar);
+    let vhRaf = null;
+    function setVhVar() {
+          if (vhRaf) return;
+          vhRaf = requestAnimationFrame(() => {
+                  vhRaf = null;
+                  const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+                  document.documentElement.style.setProperty('--vh', (h * 0.01) + 'px');
+          });
+    }
+    setVhVar();
+    window.addEventListener('resize', setVhVar);
+    window.addEventListener('orientationchange', setVhVar);
     if (window.visualViewport) {
           window.visualViewport.addEventListener('resize', setVhVar);
-          window.visualViewport.addEventListener('scroll', setVhVar);
     }
 
   // ============================================================
