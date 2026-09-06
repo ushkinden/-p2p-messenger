@@ -57,7 +57,7 @@ const server = http.createServer((req, res) => {
     return;
   }
   res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-  res.end('Сигнальный сервер P2P-мессенджера работает. Сообщения черезнего не хранятся.');
+    res.end('Сигнальный сервер P2P-мессенджера работает. Сообщения через него не хранятся.');
 });
 
 const wss = new WebSocketServer({ server });
