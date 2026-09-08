@@ -1,3 +1,22 @@
+
+
+/* ---------- Безопасность: код проверки собеседника ---------- */
+
+.safety-code-btn { margin-left: auto; color: var(--muted); font-size: 16px; }
+.safety-code-btn:hover { color: var(--ink); }
+
+.safety-code-value {
+  font-size: 20px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: 0.04em;
+  padding: 16px 12px;
+  margin: 4px 0 16px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  word-break: break-word;
+}
 :root {
   --ink: #1c1b22;
   --sidebar: #17151f;
