@@ -457,6 +457,11 @@
     state.contacts = await idbGetAll('contacts');
     renderContacts();
     connectSignaling();
+    await registerServiceWorker();
+    const chatFromUrl = new URLSearchParams(location.search).get('chat');
+    if (chatFromUrl && state.contacts.some((c) => c.id === chatFromUrl)) {
+      openChat(chatFromUrl);
+    }
   }
 
   el('copy-id-btn').addEventListener('click', () => {
@@ -554,6 +559,9 @@
       case 'registered':
         signalingDot.className = 'status-dot online';
         signalingStatusText.textContent = 'в сети';
+        if ('Notification' in window && Notification.permission === 'granted') {
+          subscribeToPush();
+        }
         break;
       case 'presence': {
         for (const [id, online] of Object.entries(msg.statuses)) {
@@ -786,8 +794,59 @@
   el('notifications-enable-btn').addEventListener('click', async () => {
     if (!('Notification' in window)) return;
     await Notification.requestPermission();
+    if (Notification.permission === 'granted') await subscribeToPush();
     updateNotificationsUI();
   });
+
+  // ============================================================
+  // PWA: service worker и push-уведомления (работают даже когда
+  // приложение закрыто или экран заблокирован — на iPhone только если
+  // сайт добавлен на домашний экран как приложение).
+  // ============================================================
+
+  const VAPID_PUBLIC_KEY = 'BFdF2UU4JeeYd2CXibf9KJYy7S2jCrtXTWQfeEGMkulWb3mkIbXG3RR4wdA7TYaogj7oyseZ30H0GxHtMD046sg';
+
+  function urlBase64ToUint8Array(base64String) {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const raw = atob(base64);
+    const output = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) output[i] = raw.charCodeAt(i);
+    return output;
+  }
+
+  async function registerServiceWorker() {
+    if (!('serviceWorker' in navigator)) return null;
+    try {
+      const reg = await navigator.serviceWorker.register('/sw.js');
+      navigator.serviceWorker.addEventListener('message', (event) => {
+        if (event.data && event.data.type === 'open-chat' && event.data.peerId) {
+          openChat(event.data.peerId);
+        }
+      });
+      return reg;
+    } catch (e) {
+      console.error('Не удалось зарегистрировать service worker:', e);
+      return null;
+    }
+  }
+
+  async function subscribeToPush() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+        });
+      }
+      send({ type: 'push_subscribe', subscription: sub.toJSON() });
+    } catch (e) {
+      console.error('Не удалось подписаться на push-уведомления:', e);
+    }
+  }
 
   function notifyNewMessage(peerId, text) {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
