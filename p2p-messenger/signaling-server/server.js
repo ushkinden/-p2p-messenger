@@ -21,6 +21,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
+const webpush = require('web-push');
 
 const { subtle } = crypto.webcrypto;
 
@@ -28,6 +29,16 @@ const PORT = process.env.PORT || 4000;
 const DATA_DIR = path.join(__dirname, 'data');
 const IDENTITIES_FILE = path.join(DATA_DIR, 'identities.json');
 const QUEUE_FILE = path.join(DATA_DIR, 'queue.json');
+const PUSH_SUBS_FILE = path.join(DATA_DIR, 'push_subscriptions.json');
+
+// Публичный ключ отдаётся клиенту "как есть" — это нормально для VAPID,
+// секретность обеспечивает только приватный ключ ниже. Значения по
+// умолчанию — рабочая пара для этого проекта; при желании можно задать
+// свои через переменные окружения (см. README).
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || 'BFdF2UU4JeeYd2CXibf9KJYy7S2jCrtXTWQfeEGMkulWb3mkIbXG3RR4wdA7TYaogj7oyseZ30H0GxHtMD046sg';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || 'NbWYAvEMoFzUmkkRHVF5x32MYhopwN0CABVRkAIuk-o';
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@example.com';
+webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
 // Ограничения на офлайн-очередь: сколько сообщений на одного получателя
 // и максимальный размер одного элемента (уже зашифрованного, в base64).
@@ -89,6 +100,44 @@ function pruneQueue() {
 }
 pruneQueue();
 setInterval(pruneQueue, 6 * 60 * 60 * 1000);
+
+// id -> объект подписки Push API (endpoint + ключи шифрования браузера).
+// Позволяет разбудить телефон, даже если приложение закрыто или экран
+// заблокирован — сама подписка не даёт доступа к содержимому переписки,
+// только "адрес", по которому можно постучаться в конкретное устройство.
+let pushSubscriptions = {};
+try {
+  pushSubscriptions = JSON.parse(fs.readFileSync(PUSH_SUBS_FILE, 'utf8'));
+} catch (e) {
+  pushSubscriptions = {};
+}
+let pushSaveTimer = null;
+function savePushSubscriptions() {
+  clearTimeout(pushSaveTimer);
+  pushSaveTimer = setTimeout(() => {
+    fs.writeFileSync(PUSH_SUBS_FILE, JSON.stringify(pushSubscriptions));
+  }, 50);
+}
+
+// Отправляет "разбуди меня" через Push API. Само уведомление намеренно
+// не содержит текста сообщения — сервер не может его прочитать, поэтому
+// и push не может ничего "слить"; текст на экране телефона появляется
+// уже после того, как приложение само расшифрует накопленные сообщения.
+async function sendPushWake(id, fromId) {
+  const sub = pushSubscriptions[id];
+  if (!sub) return;
+  try {
+    await webpush.sendNotification(sub, JSON.stringify({ type: 'new_message', from: fromId }));
+  } catch (err) {
+    if (err.statusCode === 404 || err.statusCode === 410) {
+      // Подписка больше не действительна (переустановили приложение и т.п.) — забываем её.
+      delete pushSubscriptions[id];
+      savePushSubscriptions();
+    } else {
+      console.error('Не удалось отправить push:', err.message);
+    }
+  }
+}
 
 // id -> ws (кто сейчас online)
 const online = new Map();
@@ -244,6 +293,25 @@ wss.on('connection', (ws) => {
         break;
       }
 
+      case 'push_subscribe': {
+        // Клиент прислал "адрес" для Push API после разрешения уведомлений.
+        // Сама подписка — не секрет отправителя, а служебные данные браузера.
+        if (!ws.id) return send(ws, { type: 'error', reason: 'not_registered' });
+        if (!msg.subscription || typeof msg.subscription.endpoint !== 'string') {
+          return send(ws, { type: 'error', reason: 'bad_payload' });
+        }
+        pushSubscriptions[ws.id] = msg.subscription;
+        savePushSubscriptions();
+        break;
+      }
+
+      case 'push_unsubscribe': {
+        if (!ws.id) return send(ws, { type: 'error', reason: 'not_registered' });
+        delete pushSubscriptions[ws.id];
+        savePushSubscriptions();
+        break;
+      }
+
       case 'queue_message': {
         // Сообщение для офлайн-получателя: отправитель уже зашифровал его
         // ключом получателя, сервер содержимое прочитать не может.
@@ -279,6 +347,7 @@ wss.on('connection', (ws) => {
         }
         messageQueue[msg.to].push(item);
         saveQueue();
+        sendPushWake(msg.to, ws.id);
         break;
       }
 
